@@ -122,9 +122,33 @@ class Usage:
         )
 
 
+def run_turn(agent, question, thread_id, turn):
+    """Run one question through the agent, yielding ("text", str) as the answer
+    streams and ("tool", call) for each tool call. Fills in `turn` (a Usage)."""
+    started = time.perf_counter()
+    for mode, data in agent.stream(
+        {"messages": [{"role": "user", "content": question}]},
+        {"configurable": {"thread_id": thread_id}},
+        stream_mode=["messages", "updates"],
+    ):
+        if mode == "messages":
+            chunk, meta = data
+            if isinstance(chunk, AIMessageChunk) and meta.get("langgraph_node") == "model" and chunk.text:
+                yield "text", chunk.text
+        elif mode == "updates" and "model" in data:
+            for msg in data["model"]["messages"]:
+                turn.model_calls += 1
+                if usage := getattr(msg, "usage_metadata", None):
+                    turn.input += usage.get("input_tokens", 0)
+                    turn.output += usage.get("output_tokens", 0)
+                for call in getattr(msg, "tool_calls", []) or []:
+                    turn.tool_calls += 1
+                    yield "tool", call
+    turn.seconds = time.perf_counter() - started
+
+
 def chat():
     agent = build_agent()
-    config = {"configurable": {"thread_id": "cli-session"}}
     session = Usage()
     print("Real-time agent ready. Ask anything (type 'exit' to quit).\n")
 
@@ -140,28 +164,11 @@ def chat():
 
         print("Agent: ", end="", flush=True)
         turn = Usage()
-        started = time.perf_counter()
-        for mode, data in agent.stream(
-            {"messages": [{"role": "user", "content": question}]},
-            config,
-            stream_mode=["messages", "updates"],
-        ):
-            if mode == "messages":
-                chunk, meta = data
-                # Print the model's answer token by token as it is generated.
-                if isinstance(chunk, AIMessageChunk) and meta.get("langgraph_node") == "model":
-                    print(chunk.text, end="", flush=True)
-            elif mode == "updates" and "model" in data:
-                # Show each tool call the agent decides to make.
-                for msg in data["model"]["messages"]:
-                    turn.model_calls += 1
-                    if usage := getattr(msg, "usage_metadata", None):
-                        turn.input += usage.get("input_tokens", 0)
-                        turn.output += usage.get("output_tokens", 0)
-                    for call in getattr(msg, "tool_calls", []) or []:
-                        turn.tool_calls += 1
-                        print(f"\n  [tool] {call['name']}({call['args']})", flush=True)
-        turn.seconds = time.perf_counter() - started
+        for kind, value in run_turn(agent, question, "cli-session", turn):
+            if kind == "text":
+                print(value, end="", flush=True)
+            else:
+                print(f"\n  [tool] {value['name']}({value['args']})", flush=True)
         session.add(turn)
         print("\n" + turn.line("this turn"))
         print(session.line("session  ") + "\n")

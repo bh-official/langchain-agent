@@ -34,6 +34,14 @@ copy .env.example .env      # then put your Anthropic API key in .env
 python agent.py
 ```
 
+Or open the **web chat page** (streaming answers, tool calls, usage stats and a session-usage sidebar):
+
+```powershell
+streamlit run app.py
+```
+
+Then open http://localhost:8501
+
 Try:
 
 - `What's the weather in Leicester right now, and what time is it there?`

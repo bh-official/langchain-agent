@@ -3,3 +3,4 @@ langchain-anthropic>=1.7
 httpx
 python-dotenv
 tzdata
+streamlit
